@@ -24,7 +24,6 @@ import java.io.File
 import android.content.Intent
 import android.util.Log
 import androidx.compose.foundation.background
-import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -99,7 +98,10 @@ private fun PdfViewer(file: File, title: String, docId: String, uriString: Strin
                     }
                     Log.d("RSVP", "Sending pageIndex=${pagerState.currentPage}, pageCount=$pageCount, docId=$docId")
                     context.startActivity(intent)
-                }
+                },
+                onSetStartPoint = { /* not supported for PDF yet */ },
+                isInSelectionMode = false,
+                selectedWordPreview = null
             )
         }
     ) { padding ->
