@@ -23,6 +23,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.*
 import com.example.blitzread.MainActivity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.AnnotatedString
 
 @Composable
 fun RsvpScreen(
@@ -30,7 +39,7 @@ fun RsvpScreen(
     uriString: String,
     locatorJson: String?,
     pageIndex: Int?,
-    pageCount: Int?, // add this param
+    pageCount: Int?,
     vm: RsvpViewModel = viewModel(),
     modifier: Modifier = Modifier
 ) {
@@ -38,7 +47,7 @@ fun RsvpScreen(
         vm.load(docId, uriString, locatorJson, pageIndex)
     }
 
-    val token by vm.currentTokenText.collectAsState()
+    val tokenDisplay by vm.currentTokenDisplay.collectAsState() // Changed from currentTokenText
     val state by vm.sessionState.collectAsState()
 
     val currentPage = ((pageIndex ?: 0) + 1).coerceAtLeast(1)
@@ -51,25 +60,19 @@ fun RsvpScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .padding(bottom = 72.dp)
     ) {
-        // Top info
         Text(text = "Current page: $currentPage of $totalPages")
-
         Spacer(Modifier.height(18.dp))
 
-        // Token area
+        // Token area with ORP alignment and highlighting
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(.6f),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = token.ifBlank { "—" },
-                style = MaterialTheme.typography.displayLarge
-            )
+            OrpWordDisplay(word = tokenDisplay.fullText, orpIndex = tokenDisplay.orpIndex)
         }
 
-        // Controls (pulled up)
         Spacer(Modifier.height(16.dp))
 
         Row(
@@ -87,11 +90,114 @@ fun RsvpScreen(
 
         Text(
             text = "Current Wpm: ${state.effectiveWpm}",
-            modifier = Modifier.align(Alignment.CenterHorizontally))
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
     }
 
-    // No BottomBar here. Scaffold in AppNavHost owns it.
     Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+fun OrpWordDisplay(
+    word: String,
+    orpIndex: Int,
+    modifier: Modifier = Modifier
+) {
+    if (word.isBlank()) {
+        Text(
+            text = "—",
+            style = MaterialTheme.typography.displayLarge,
+            modifier = modifier
+        )
+        return
+    }
+
+    val beforeOrp = word.take(orpIndex)
+    val orpChar = word.getOrNull(orpIndex)?.toString() ?: ""
+    val afterOrp = word.drop(orpIndex + 1)
+
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val textStyle = MaterialTheme.typography.displayLarge
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxWidth()
+    ) {
+        val screenWidthPx = with(density) { this@BoxWithConstraints.maxWidth.roundToPx() }
+        val fixationX = (screenWidthPx * 0.4f).toInt()
+
+        // Pre-measure all text parts
+        val beforeLayout = textMeasurer.measure(
+            text = AnnotatedString(beforeOrp),
+            style = textStyle
+        )
+        val orpLayout = textMeasurer.measure(
+            text = AnnotatedString(orpChar),
+            style = textStyle.copy(fontWeight = FontWeight.Bold)
+        )
+        val afterLayout = textMeasurer.measure(
+            text = AnnotatedString(afterOrp),
+            style = textStyle
+        )
+
+        val beforeWidth = beforeLayout.size.width
+        val totalWidth = beforeWidth + orpLayout.size.width + afterLayout.size.width
+
+        // Calculate scale if needed (minimum 0.5 scale to prevent too much shrinking)
+        val scale = if (totalWidth > screenWidthPx - 40) {
+            maxOf(0.5f, (screenWidthPx - 40f) / totalWidth)
+        } else {
+            1f
+        }
+
+        // Calculate position with scale applied
+        val scaledBeforeWidth = (beforeWidth * scale).toInt()
+        val targetX = fixationX - scaledBeforeWidth
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentSize(Alignment.TopStart)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    }
+                    .offset { IntOffset(targetX, 0) }
+                    .wrapContentWidth(unbounded = true) // NEW: Allow content to extend beyond bounds
+            ) {
+                Text(
+                    text = beforeOrp,
+                    style = textStyle,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1, // NEW: Force single line
+                    softWrap = false // NEW: No wrapping
+                )
+
+                Text(
+                    text = orpChar,
+                    style = textStyle,
+                    color = Color.Red,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+
+                Text(
+                    text = afterOrp,
+                    style = textStyle,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+    }
 }
 @Composable
 fun RsvpScaffoldedScreen(

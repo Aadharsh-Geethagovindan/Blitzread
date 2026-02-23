@@ -22,9 +22,11 @@ class RsvpPlaybackController(
     private var settings: RsvpSettings = initialSettings
     private var location: ReaderLocation = ReaderLocation(documentId = "")
 
+    private val _currentTokenDisplay = MutableStateFlow(TokenDisplay("", 0))
+    val currentTokenDisplay: StateFlow<TokenDisplay> = _currentTokenDisplay.asStateFlow()
+
     private val _currentTokenText = MutableStateFlow("")
     val currentTokenText: StateFlow<String> = _currentTokenText.asStateFlow()
-
     private val _sessionState = MutableStateFlow(
         RsvpSessionState(location = location, effectiveWpm = settings.wpm, isPlaying = false)
     )
@@ -48,15 +50,17 @@ class RsvpPlaybackController(
         job = scope.launch {
             while (isActive) {
                 emitCurrentToken()
+                publishState(isPlaying = true) // Publish state AFTER emitting token (so tokenIndex matches displayed word)
 
-                // Advance location by 1 token (simple v1 linear advance)
+                // Delay BEFORE advancing (so saved position matches displayed word)
+                delay(msPerToken(settings.wpm))
+
+                // Advance location by 1 token
                 if (!advanceOneToken()) {
                     // End of content -> stop
                     pause()
                     return@launch
                 }
-
-                delay(msPerToken(settings.wpm))
             }
         }
     }
@@ -102,10 +106,25 @@ class RsvpPlaybackController(
 
     private fun emitCurrentToken() {
         val doc = content ?: return
-        val token = tokenAt(doc, location)
-        _currentTokenText.value = token ?: ""
+        val token = tokenAt(doc, location) ?: ""
+        val orpIndex = calculateOrpIndex(token)
+        _currentTokenDisplay.value = TokenDisplay(token, orpIndex)
+        _currentTokenText.value = token
     }
+    private fun calculateOrpIndex(word: String): Int {
+        if (!settings.orpEnabled) {
+            return word.length / 2 // Center alignment if ORP disabled
+        }
 
+        val cleanLength = word.trim().length
+        return when (cleanLength) {
+            0, 1 -> 0
+            in 2..5 -> 1
+            in 6..9 -> 2
+            in 10..13 -> 3
+            else -> 4
+        }.coerceAtMost(cleanLength - 1) // Don't exceed word length
+    }
     private fun advanceOneToken(): Boolean {
         val doc = content ?: return false
 
@@ -174,3 +193,7 @@ class RsvpPlaybackController(
     }
 }
 
+data class TokenDisplay(
+    val fullText: String,
+    val orpIndex: Int // 0-based index of the ORP character
+)

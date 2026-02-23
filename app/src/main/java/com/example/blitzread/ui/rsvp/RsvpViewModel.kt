@@ -16,25 +16,23 @@ import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.util.Try
 import com.example.blitzread.data.local.UriCache
 import com.example.blitzread.engine.readium.ReadiumReaderOpener
-
-
+import com.example.blitzread.data.local.ReaderProgressStore
+import kotlinx.coroutines.GlobalScope
 import org.readium.r2.shared.publication.Publication
 import java.io.File
 class RsvpViewModel(app: Application) : AndroidViewModel(app) {
 
     private val controller = RsvpPlaybackController(viewModelScope)
     private val pdfExtractor = PdfTextExtractor(app.applicationContext)
-
+    private val progress = ReaderProgressStore(app.applicationContext)
     //private val _epubLocation = MutableStateFlow<Pair<Int, Int>?>(null) // (current, total)
     //val epubLocation: StateFlow<Pair<Int, Int>?> = _epubLocation
     val currentTokenText = controller.currentTokenText
     val sessionState = controller.sessionState
-
+    val currentTokenDisplay = controller.currentTokenDisplay
     fun load(docId: String, uriString: String, locatorJson: String?, pageIndex: Int?) {
-        // v1
         viewModelScope.launch(Dispatchers.IO) {
             val uri = Uri.parse(uriString)
-
             val mime = getApplication<Application>()
                 .contentResolver
                 .getType(uri)
@@ -46,32 +44,19 @@ class RsvpViewModel(app: Application) : AndroidViewModel(app) {
 
                 val locator = locatorJson
                     ?.let { Locator.fromJSON(JSONObject(it)) }
+                    ?: null
 
 
-                // DEBUG: Log what's in the locator
-                locator?.let {
-                    Log.d("RsvpViewModel", "=== LOCATOR DEBUG ===")
-                    Log.d("RsvpViewModel", "href: ${it.href}")
-                    //Log.d("RsvpViewModel", "type: ${it.type}")
-                    Log.d("RsvpViewModel", "title: ${it.title}")
-                    Log.d("RsvpViewModel", "locations.position: ${it.locations.position}")
-                    Log.d("RsvpViewModel", "locations.progression: ${it.locations.progression}")
-                    Log.d("RsvpViewModel", "locations.totalProgression: ${it.locations.totalProgression}")
-                    Log.d("RsvpViewModel", "text.before: ${it.text.before}")
-                    Log.d("RsvpViewModel", "text.highlight: ${it.text.highlight}")
-                    Log.d("RsvpViewModel", "text.after: ${it.text.after}")
-                    Log.d("RsvpViewModel", "JSON: $locatorJson")
-                    Log.d("RsvpViewModel", "===================")
-                }
 
-                // Open publication
                 val opener = ReadiumReaderOpener(app)
                 val pubTry = opener.openLocalFile(file)
                 val publication = when (pubTry) {
-                    is Try.Success -> pubTry.value
-                    is Try.Failure -> {
+                    is org.readium.r2.shared.util.Try.Success -> pubTry.value
+                    is org.readium.r2.shared.util.Try.Failure -> {
                         val content = TextToDocumentContent.fromPlainText(docId, "Failed to open EPUB.")
-                        withContext(Dispatchers.Main) { controller.loadContent(content, ReaderLocation(documentId = docId)) }
+                        withContext(Dispatchers.Main) {
+                            controller.loadContent(content, ReaderLocation(documentId = docId))
+                        }
                         return@launch
                     }
                 }
@@ -83,19 +68,63 @@ class RsvpViewModel(app: Application) : AndroidViewModel(app) {
                         .trim()
                         .trimStart('/')
 
-                // Find the spine item (chapter) matching the locator href (tolerant match)
                 val locatorHref = normHref(locator?.href?.toString())
-
                 val link: Link? =
                     publication.readingOrder.firstOrNull { normHref(it.href.toString()) == locatorHref }
                         ?: publication.readingOrder.firstOrNull()
 
                 val chapterText = if (link != null) extractLinkText(publication, link) else ""
-
                 val content = TextToDocumentContent.fromPlainText(docId, chapterText.ifBlank { "No text extracted." })
 
-                // NEW: Calculate start index based on selected text or progression
-                val startIndex = calculateStartIndex(locator, content, chapterText)
+                // Calculate start index from selection or load saved position
+                val startIndex = if (locator?.text?.highlight != null) {
+                    // User selected a specific word - start there (keep exact position)
+                    Log.d("RsvpViewModel", "User selected a word - using calculateStartIndex")
+                    calculateStartIndex(locator, content, chapterText)
+                } else {
+                    // No word selection - check for saved RSVP position
+                    val saved = progress.loadRsvpPosition(docId)
+                    Log.d("RsvpViewModel", "No word selection. Loaded saved position: $saved for docId: $docId")
+
+                    if (saved != null && saved > 0) {
+                        // Intelligent resume: find last sentence boundary (period) before saved position
+                        val tokens = content.paragraphs.firstOrNull()?.sentences?.firstOrNull()?.tokens ?: emptyList()
+
+                        // Search backwards from saved position for a word ending with period (max 50 words back)
+                        var sentenceStartIndex: Int? = null
+                        for (i in (saved - 1) downTo maxOf(0, saved - 50)) {
+                            val token = tokens.getOrNull(i)?.text ?: continue
+                            // Check if token ends with sentence-ending punctuation
+                            if (token.endsWith(".") || token.endsWith("!") || token.endsWith("?")) {
+                                sentenceStartIndex = i + 1 // Start at word after the period
+                                break
+                            }
+                        }
+
+                        val resumeIndex = if (sentenceStartIndex != null) {
+                            Log.d("RsvpViewModel", "Found sentence start at $sentenceStartIndex (was at $saved)")
+                            sentenceStartIndex
+                        } else {
+                            // No period found nearby - use saved position as-is
+                            Log.d("RsvpViewModel", "No sentence boundary found within 50 words, using saved position $saved")
+                            saved
+                        }
+
+                        resumeIndex.coerceIn(0, tokens.size - 1)
+                    } else {
+                        // No saved position - use progression from locator (top of current page)
+                        val prog = locator?.locations?.progression ?: 0.0
+                        val totalTokens = content.paragraphs.firstOrNull()
+                            ?.sentences?.firstOrNull()
+                            ?.tokens?.size ?: 0
+                        val progIndex = (prog * totalTokens).toInt().coerceIn(0, (totalTokens - 1).coerceAtLeast(0))
+                        Log.d("RsvpViewModel", "No saved position, using progression: $progIndex")
+                        progIndex
+                    }
+                }
+
+                Log.d("RsvpViewModel", "Starting RSVP at token index: $startIndex")
+                //Log.d("RsvpViewModel", "Final startIndex: $startIndex")
 
                 withContext(Dispatchers.Main) {
                     controller.loadContent(
@@ -112,22 +141,49 @@ class RsvpViewModel(app: Application) : AndroidViewModel(app) {
                 val text = if (pageIndex != null) {
                     pdfExtractor.extractPageText(uri, pageIndex)
                 } else {
-                    pdfExtractor.extractWholeText(uri) // fallback
+                    pdfExtractor.extractWholeText(uri)
                 }
 
                 val content = TextToDocumentContent.fromPlainText(docId, text)
+
+                // NEW: Load saved position for PDF too
+                val savedPosition = progress.loadRsvpPosition(docId) ?: 0
 
                 withContext(Dispatchers.Main) {
                     controller.loadContent(
                         content,
                         ReaderLocation(documentId = docId),
-                        startTokenIndex = 0 // page text starts at top
+                        startTokenIndex = savedPosition
                     )
                 }
                 return@launch
             }
         }
+    }
 
+    fun saveCurrentPosition(docId: String) {
+        val currentState = controller.sessionState.value
+        val tokenIndex = currentState.location.tokenIndex
+        val currentWord = controller.currentTokenText.value
+        Log.d("RsvpViewModel", "saveCurrentPosition called for docId: $docId, tokenIndex: $tokenIndex")
+
+        if (tokenIndex > 0) {
+            // Use GlobalScope because viewModelScope gets cancelled on activity exit
+            GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    progress.saveRsvpPosition(docId, tokenIndex, currentWord)
+                    Log.d("RsvpViewModel", "Save succeeded: $tokenIndex for doc $docId")
+
+                    // Verify it was saved by reading it back
+                    val verify = progress.loadRsvpPosition(docId)
+                    Log.d("RsvpViewModel", "Verification read: $verify")
+                } catch (e: Exception) {
+                    Log.e("RsvpViewModel", "Error saving position", e)
+                }
+            }
+        } else {
+            Log.d("RsvpViewModel", "Skipping save - position is at start (0)")
+        }
     }
     private suspend fun extractLinkText(publication: Publication, link: Link): String {
         val res = publication.get(link) ?: return ""

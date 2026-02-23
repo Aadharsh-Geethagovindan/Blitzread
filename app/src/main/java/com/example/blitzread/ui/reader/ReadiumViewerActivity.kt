@@ -1,5 +1,6 @@
 package com.example.blitzread.ui.reader
 
+import android.app.Activity
 import android.net.Uri
 import android.os.Bundle
 import android.widget.FrameLayout
@@ -18,6 +19,7 @@ import com.example.blitzread.data.local.ReaderProgressStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.content.Intent
+import android.util.Log
 import android.view.Gravity
 import android.widget.Toast
 import androidx.compose.runtime.Composable
@@ -43,7 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color as ComposeColor
-
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.unit.dp
 
 class ReadiumViewerActivity : AppCompatActivity() {
@@ -132,6 +134,20 @@ class ReadiumViewerActivity : AppCompatActivity() {
             vm.publication.collectLatest { pub ->
                 if (pub != null) {
                     title = pub.metadata.title ?: "Book"
+
+                    val savedWord = withContext(Dispatchers.IO) {
+                        progress.loadRsvpWord(docId)
+                    }
+                    Log.d("ReadiumViewerActivity", "Loaded savedWord: '$savedWord' for docId: $docId")
+                    if (savedWord != null) {
+                        selectedWordPreview.value = if (savedWord.length > 15) {
+                            savedWord.take(12) + "..."
+                        } else {
+                            savedWord
+                        }
+                        Log.d("ReadiumViewerActivity", "Set preview to: '${selectedWordPreview.value}'")
+                    }
+
                     val epubFactory = EpubNavigatorFactory(pub)
 
                     val savedLocator: Locator? = withContext(Dispatchers.IO) {
@@ -212,15 +228,17 @@ class ReadiumViewerActivity : AppCompatActivity() {
         }
     }
 
+
     // MODIFIED: Start RSVP from selected or current locator
     private fun startRsvpFromLocator(uriString: String) {
+        Log.d("ReadiumViewerActivity", "startRsvpFromLocator called")
         val frag = supportFragmentManager.findFragmentById(containerId) as? EpubNavigatorFragment
             ?: return
 
         // Use selected locator if available, otherwise current position
         val locator = selectedLocator ?: frag.currentLocator.value
         selectedLocator = null // Clear after use
-        selectedWordPreview.value = null // Clear preview after starting
+        //selectedWordPreview.value = null // Clear preview after starting
         val locatorJson = locator.toJSON().toString()
         val pageIndex = (locator.locations.position?.toInt()?.minus(1)) ?: -1
 
@@ -230,7 +248,9 @@ class ReadiumViewerActivity : AppCompatActivity() {
             putExtra(RsvpActivity.EXTRA_LOCATOR_JSON, locatorJson)
             putExtra(RsvpActivity.EXTRA_PAGE_INDEX, pageIndex)
             putExtra(RsvpActivity.EXTRA_PAGE_COUNT, epubPageCount)
+
         }
+
         startActivity(intent)
     }
 
@@ -246,7 +266,25 @@ class ReadiumViewerActivity : AppCompatActivity() {
             progress.saveLocator(docId, locator)
         }
     }
+    override fun onResume() {
+        super.onResume()
 
+        // Reload saved RSVP word when returning from RSVP activity
+        lifecycleScope.launch(Dispatchers.IO) {
+            val savedWord = progress.loadRsvpWord(docId)
+            Log.d("ReadiumViewerActivity", "onResume - Loaded savedWord: '$savedWord'")
+            if (savedWord != null) {
+                withContext(Dispatchers.Main) {
+                    selectedWordPreview.value = if (savedWord.length > 15) {
+                        savedWord.take(12) + "..."
+                    } else {
+                        savedWord
+                    }
+                    Log.d("ReadiumViewerActivity", "onResume - Set preview to: '${selectedWordPreview.value}'")
+                }
+            }
+        }
+    }
     private fun copyUriToCacheFile(uri: Uri): File {
         val outFile = File(cacheDir, "book-${System.currentTimeMillis()}.epub")
         contentResolver.openInputStream(uri).use { input ->
