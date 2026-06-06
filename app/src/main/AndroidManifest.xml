@@ -36,6 +36,15 @@
             android:name=".ui.pdf.PdfViewerActivity"
             android:exported="false"
             android:theme="@style/Theme.BlitzRead" />
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.BlitzRead" />
+        <activity
+            android:name=".ui.text.TextEditorActivity"
+            android:exported="false"
+            android:theme="@style/Theme.BlitzRead"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>

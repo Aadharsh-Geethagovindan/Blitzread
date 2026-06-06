@@ -1,16 +1,24 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
 
+// Load signing credentials from local.properties (never committed to git)
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
 android {
-    namespace = "com.example.blitzread"
+    namespace = "com.blitzread.app"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.blitzread"
+        applicationId = "com.blitzread.app"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -19,9 +27,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile     = file(localProps["KEYSTORE_PATH"] as String)
+            storePassword = localProps["STORE_PASSWORD"] as String
+            keyAlias      = localProps["KEY_ALIAS"] as String
+            keyPassword   = localProps["KEY_PASSWORD"] as String
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled   = true
+            isShrinkResources = true
+            signingConfig     = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
