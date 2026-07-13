@@ -16,6 +16,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.BlitzRead">
 
             <intent-filter>
@@ -27,22 +28,27 @@
         <activity
             android:name=".ui.reader.ReadiumViewerActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
         <activity
             android:name=".ui.rsvp.RsvpActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.BlitzRead" />
         <activity
             android:name=".ui.pdf.PdfViewerActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.BlitzRead" />
         <activity
             android:name=".ui.settings.SettingsActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.BlitzRead" />
         <activity
             android:name=".ui.text.TextEditorActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.BlitzRead"
             android:windowSoftInputMode="adjustResize" />
     </application>
